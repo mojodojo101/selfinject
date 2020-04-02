@@ -291,7 +291,7 @@ int main(int argc, char* argv[]) {
     printf("\nBase of Code%x\n", lpPeHeader->OptionalHeader.BaseOfCode);
     //                                                                              64 vs 32 bit on base of code
     //if (VirtualProtect((LPVOID)((DWORD)lpImage+ 0x1000), lpPeHeader->OptionalHeader.BaseOfData - lpPeHeader->OptionalHeader.BaseOfCode, PAGE_EXECUTE_READ, NULL))
-    if (VirtualProtect((LPVOID)(lpImage), lpPeHeader->OptionalHeader.SizeOfImage, PAGE_EXECUTE_READ, NULL))
+    if (VirtualProtect((LPVOID)(lpImage), lpPeHeader->OptionalHeader.SizeOfImage, PAGE_EXECUTE_READWRITE, NULL))
         printf("Coldnt change PAGE protection: %x\n", GetLastError());
 
 
