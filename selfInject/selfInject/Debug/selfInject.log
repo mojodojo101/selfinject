@@ -1,0 +1,7 @@
+﻿  main.cpp
+C:\Users\malte\Desktop\dropper\selfInject\selfInject\main.cpp(13,12): warning C4101: 'hThread': unreferenced local variable
+C:\Users\malte\Desktop\dropper\selfInject\selfInject\main.cpp(154,27): warning C4018: '<': signed/unsigned mismatch
+C:\Users\malte\Desktop\dropper\selfInject\selfInject\main.cpp(211,43): warning C4018: '<': signed/unsigned mismatch
+C:\Users\malte\Desktop\dropper\selfInject\selfInject\main.cpp(228,11): warning C4101: 'pszDecrypt': unreferenced local variable
+C:\Users\malte\Desktop\dropper\selfInject\selfInject\main.cpp(229,11): warning C4101: 'pszOutBuffer': unreferenced local variable
+  selfInject.vcxproj -> C:\Users\malte\Desktop\dropper\selfInject\Debug\selfInject.exe

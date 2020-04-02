@@ -1,6 +1,0 @@
-https://www.youtube.com/watch?v=SseZ_t9DToo
-https://upload.wikimedia.org/wikipedia/commons/1/1b/Portable_Executable_32_bit_Structure_in_SVG_fixed.svg
-http://www.rohitab.com/discuss/topic/40761-manual-dll-injection/
-http://blog.opensecurityresearch.com/2013/01/windows-dll-injection-basics.html
-https://guidedhacking.com/threads/manual-mapping-dll-injection-tutorial-how-to-manual-map.10009/
-https://www.youtube.com/watch?v=WthvahlAYFY

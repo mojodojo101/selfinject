@@ -1,0 +1,4 @@
+﻿  dllmain.cpp
+C:\Users\malte\source\repos\callHome\callHome\dllmain.cpp(15,8): warning C4101: 'pszDecrypt': unreferenced local variable
+C:\Users\malte\source\repos\callHome\callHome\dllmain.cpp(14,8): warning C4101: 'dwProcessId': unreferenced local variable
+  callHome.vcxproj -> C:\Users\malte\source\repos\callHome\Debug\callHome.dll
